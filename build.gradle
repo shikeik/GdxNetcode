@@ -1,0 +1,73 @@
+// GdxNetcode — 通用网络联机框架
+// 提供: NetworkManager, Transport, RPC, Supabase 等底层网络基础设施
+// 定位: 纯底层框架，不包含任何业务逻辑（如聊天、游戏玩法等）
+
+buildscript {
+    repositories {
+        google()
+        mavenLocal()
+        mavenCentral()
+        gradlePluginPortal()
+        maven { url 'https://maven.aliyun.com/repository/public/' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url "https://jitpack.io" }
+    }
+    dependencies {
+        classpath 'com.github.shikeik:GdxGradle:0.9.0'
+    }
+}
+
+apply plugin: 'java-library'
+apply plugin: 'maven-publish'
+apply plugin: 'com.goldsprite.gdx-tasks'
+
+gdxTasks {
+    taskGroup = 'gdxnetcode'
+}
+
+group = "${project.findProperty('jitpackGroup')}"
+version = "${project.findProperty('projectVersion')}"
+
+def jdkVer = Integer.parseInt(project.findProperty('jdkVersion'))
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(jdkVer)
+    }
+    withSourcesJar()
+}
+
+repositories {
+    google()
+    mavenLocal()
+    mavenCentral()
+    gradlePluginPortal()
+    maven { url 'https://maven.aliyun.com/repository/public/' }
+    maven { url 'https://maven.aliyun.com/repository/google' }
+    maven { url "https://jitpack.io" }
+    maven { url 'https://repo1.maven.org/maven2/' }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+dependencies {
+    // GdxCore 引擎核心（mavenLocal / JitPack）
+    api "com.github.shikeik.GdxCore:core:${project.findProperty('gdxCoreVersion')}"
+
+    // WebSocket (Supabase Realtime)
+    api 'org.java-websocket:Java-WebSocket:1.5.7'
+    api 'org.slf4j:slf4j-nop:2.0.13'
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            groupId = "${project.findProperty('jitpackGroup')}"
+            artifactId = 'netcode'
+            version = project.version
+        }
+    }
+}
