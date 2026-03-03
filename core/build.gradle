@@ -1,0 +1,21 @@
+// GdxNetcode:core — 纯底层网络核心
+// Transport / RPC / NetworkManager / NetworkVariable / NetworkObject 等
+
+dependencies {
+    // GdxCore 引擎核心（mavenLocal / JitPack）
+    api "com.github.shikeik.GdxCore:core:${rootProject.findProperty('gdxCoreVersion')}"
+
+    // 测试
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation "com.badlogicgames.gdx:gdx:${rootProject.findProperty('gdxVersion')}"
+    testImplementation "com.badlogicgames.gdx:gdx-backend-headless:${rootProject.findProperty('gdxVersion')}"
+    testImplementation "com.badlogicgames.gdx:gdx-platform:${rootProject.findProperty('gdxVersion')}:natives-desktop"
+}
+
+test {
+    testLogging {
+        showStandardStreams = true
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+    }
+}

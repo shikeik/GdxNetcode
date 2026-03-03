@@ -1,6 +1,6 @@
-// GdxNetcode — 通用网络联机框架
-// 提供: NetworkManager, Transport, RPC, Supabase 等底层网络基础设施
-// 定位: 纯底层框架，不包含任何业务逻辑（如聊天、游戏玩法等）
+// GdxNetcode — 纯底层网络核心框架
+// 多模块: core (Transport / RPC / NetworkManager / NetworkVariable 等)
+// 定位: 纯底层框架，不包含任何上层业务封装
 
 buildscript {
     repositories {
@@ -17,57 +17,50 @@ buildscript {
     }
 }
 
-apply plugin: 'java-library'
-apply plugin: 'maven-publish'
-apply plugin: 'com.goldsprite.gdx-tasks'
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+    apply plugin: 'com.goldsprite.gdx-tasks'
 
-gdxTasks {
-    taskGroup = 'gdxnetcode'
-}
-
-group = "${project.findProperty('jitpackGroup')}"
-version = "${project.findProperty('projectVersion')}"
-
-def jdkVer = Integer.parseInt(project.findProperty('jdkVersion'))
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(jdkVer)
+    gdxTasks {
+        taskGroup = 'gdxnetcode'
     }
-    withSourcesJar()
-}
 
-repositories {
-    google()
-    mavenLocal()
-    mavenCentral()
-    gradlePluginPortal()
-    maven { url 'https://maven.aliyun.com/repository/public/' }
-    maven { url 'https://maven.aliyun.com/repository/google' }
-    maven { url "https://jitpack.io" }
-    maven { url 'https://repo1.maven.org/maven2/' }
-}
+    group = "${rootProject.findProperty('jitpackGroup')}"
+    version = "${rootProject.findProperty('projectVersion')}"
 
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-}
+    def jdkVer = Integer.parseInt(rootProject.findProperty('jdkVersion'))
 
-dependencies {
-    // GdxCore 引擎核心（mavenLocal / JitPack）
-    api "com.github.shikeik.GdxCore:core:${project.findProperty('gdxCoreVersion')}"
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(jdkVer)
+        }
+        withSourcesJar()
+    }
 
-    // WebSocket (Supabase Realtime)
-    api 'org.java-websocket:Java-WebSocket:1.5.7'
-    api 'org.slf4j:slf4j-nop:2.0.13'
-}
+    repositories {
+        google()
+        mavenLocal()
+        mavenCentral()
+        gradlePluginPortal()
+        maven { url 'https://maven.aliyun.com/repository/public/' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url "https://jitpack.io" }
+        maven { url 'https://repo1.maven.org/maven2/' }
+    }
 
-publishing {
-    publications {
-        mavenJava(MavenPublication) {
-            from components.java
-            groupId = "${project.findProperty('jitpackGroup')}"
-            artifactId = 'netcode'
-            version = project.version
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                from components.java
+                groupId = "${rootProject.findProperty('jitpackGroup')}"
+                artifactId = project.name   // 'core'
+                version = project.version
+            }
         }
     }
 }
