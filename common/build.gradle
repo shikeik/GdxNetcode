@@ -1,0 +1,26 @@
+// GdxNetcode:common — 通用网络封装模块
+// 提供: HeadlessGameServer, ServerConsole, Supabase Lobby, Chat 等通用联机封装
+// 依赖: :core (底层网络) + GdxCore (引擎核心) + WebSocket
+
+dependencies {
+    // 底层网络核心 (Transport / RPC / NetworkManager)
+    api project(':core')
+
+    // WebSocket (Supabase Realtime Phoenix Channel)
+    api 'org.java-websocket:Java-WebSocket:1.5.7'
+    api 'org.slf4j:slf4j-nop:2.0.13'
+
+    // 测试
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation "com.badlogicgames.gdx:gdx:${rootProject.findProperty('gdxVersion')}"
+    testImplementation "com.badlogicgames.gdx:gdx-backend-headless:${rootProject.findProperty('gdxVersion')}"
+    testImplementation "com.badlogicgames.gdx:gdx-platform:${rootProject.findProperty('gdxVersion')}:natives-desktop"
+}
+
+test {
+    testLogging {
+        showStandardStreams = true
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+    }
+}

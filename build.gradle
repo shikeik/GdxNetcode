@@ -1,6 +1,6 @@
-// GdxNetcode — 纯底层网络核心框架
-// 多模块: core (Transport / RPC / NetworkManager / NetworkVariable 等)
-// 定位: 纯底层框架，不包含任何上层业务封装
+// GdxNetcode — 网络核心框架 + 通用封装
+// 模块: core (Transport / RPC / NetworkManager), common (Lobby / Chat / HeadlessServer)
+// 定位: 可复用的通用网络库，不包含任何游戏业务逻辑
 
 buildscript {
     repositories {

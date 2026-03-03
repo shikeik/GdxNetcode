@@ -1,2 +1,3 @@
 rootProject.name = 'GdxNetcode'
 include ':core'
+include ':common'
