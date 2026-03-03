@@ -500,23 +500,16 @@ public class NetworkManager {
         
         NetworkBehaviour target = behaviours.get(behaviourIndex);
         
-        // 通过反射找到并调用目标方法
+        // 从预缓存中获取 RPC 方法（internalAttach 时已扫描并缓存）
         try {
-            // 构建参数类型数组用于精确匹配方法
-            Class<?>[] paramTypes = new Class<?>[argCount];
-            for (int i = 0; i < argCount; i++) {
-                if (args[i] instanceof Integer) paramTypes[i] = int.class;
-                else if (args[i] instanceof Float) paramTypes[i] = float.class;
-                else if (args[i] instanceof Boolean) paramTypes[i] = boolean.class;
-                else if (args[i] instanceof String) paramTypes[i] = String.class;
-                else paramTypes[i] = args[i].getClass();
+            java.lang.reflect.Method method = target.getCachedRpcMethod(methodName);
+            if (method == null) {
+                DLog.logErr("[NetworkManager] RPC 方法未在缓存中找到（可能缺少 @ServerRpc/@ClientRpc 注解）: " + methodName);
+                return;
             }
-            
-            java.lang.reflect.Method method = target.getClass().getDeclaredMethod(methodName, paramTypes);
-            method.setAccessible(true);
             method.invoke(target, args);
         } catch (Exception e) {
-            DLog.logErr("[NetworkManager] RPC 反射调用失败: " + methodName + " -> " + e.getMessage());
+            DLog.logErr("[NetworkManager] RPC 调用失败: " + methodName + " -> " + e.getMessage());
         }
     }
 

@@ -1,12 +1,16 @@
 package com.goldsprite.gdengine.netcode;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 所有联机业务逻辑的基类 (类似 Unity 的 NetworkBehaviour)。
- * 当它被挂载到 NetworkObject 后，会自动通过反射将其带有的 NetworkVariable 字段注册给 NetworkObject 进行管理。
+ * 当它被挂载到 NetworkObject 后，会自动通过反射将其带有的 NetworkVariable 字段注册给 NetworkObject 进行管理，
+ * 并预扫描所有 @ServerRpc/@ClientRpc 方法缓存到 rpcMethodCache 中，避免每次 RPC 调用都反射查找。
  */
 public abstract class NetworkBehaviour {
 
@@ -15,9 +19,13 @@ public abstract class NetworkBehaviour {
     // 所属的 NetworkManager（由 NetworkObject 或外部绑定）
     private NetworkManager manager;
 
+    // RPC 方法缓存：方法名 -> Method 对象（在 internalAttach 时一次性扫描并缓存）
+    private final Map<String, Method> rpcMethodCache = new HashMap<>();
+
     public void internalAttach(NetworkObject parentObject) {
         this.networkObject = parentObject;
         autoRegisterNetworkVariables();
+        cacheRpcMethods();
     }
 
     public NetworkObject getNetworkObject() {
@@ -97,5 +105,28 @@ public abstract class NetworkBehaviour {
                 }
             }
         }
+    }
+
+    /**
+     * 在 attach 时一次性扫描所有 @ServerRpc 和 @ClientRpc 方法，缓存到 rpcMethodCache 中。
+     * 之后 RPC 调度只需 Map.get(methodName)，无需每次 getDeclaredMethod 反射查找。
+     */
+    private void cacheRpcMethods() {
+        for (Method m : this.getClass().getDeclaredMethods()) {
+            if (m.isAnnotationPresent(ServerRpc.class) || m.isAnnotationPresent(ClientRpc.class)) {
+                m.setAccessible(true);
+                rpcMethodCache.put(m.getName(), m);
+            }
+        }
+    }
+
+    /**
+     * 从预缓存中获取 RPC 方法。供 NetworkManager.handleRpcPacket() 调用，
+     * 替代原来每次 getDeclaredMethod 的反射查找。
+     * @param methodName RPC 方法名
+     * @return 缓存的 Method 对象，未找到返回 null
+     */
+    public Method getCachedRpcMethod(String methodName) {
+        return rpcMethodCache.get(methodName);
     }
 }
