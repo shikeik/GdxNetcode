@@ -37,9 +37,11 @@ public class ReliableUdpTransport implements Transport {
     private static final int SEQ_MAX = 65536;
     private static final int SEQ_HALF = SEQ_MAX / 2;
 
-    // 重传参数
-    private static final long RETRANSMIT_TIMEOUT_MS = 200;
-    private static final int MAX_RETRANSMIT_COUNT = 5;
+    // 重传参数（指数退避: 200ms → 400ms → 800ms → 1600ms → ...）
+    private static final long RETRANSMIT_BASE_TIMEOUT_MS = 200;
+    private static final int MAX_RETRANSMIT_COUNT = 15;
+    /** 单次重传超时上限(ms)，防止退避时间过长 */
+    private static final long RETRANSMIT_MAX_TIMEOUT_MS = 5000;
 
     // 被装饰的原始 UDP 传输层
     private final UdpSocketTransport rawTransport;
@@ -345,11 +347,19 @@ public class ReliableUdpTransport implements Transport {
         sendPingIfNeeded();
 
         long now = System.currentTimeMillis();
-        List<PendingEntry> timedOut = pendingBuffer.getTimedOut(now, RETRANSMIT_TIMEOUT_MS);
+        List<PendingEntry> entries = pendingBuffer.getAllPending();
 
-        for (PendingEntry entry : timedOut) {
+        for (PendingEntry entry : entries) {
+            // 指数退避: baseTimeout * 2^retransmitCount, 但不超过上限
+            long timeout = Math.min(
+                RETRANSMIT_BASE_TIMEOUT_MS * (1L << Math.min(entry.retransmitCount, 10)),
+                RETRANSMIT_MAX_TIMEOUT_MS);
+
+            if (now - entry.lastSendTime < timeout) continue; // 未超时，跳过
+
             if (entry.retransmitCount >= MAX_RETRANSMIT_COUNT) {
-                DLog.logErr("[ReliableUDP] 包 seq=" + entry.seqNum + " 超过最大重传次数，放弃");
+                DLog.logT("Netcode", "[ReliableUDP] 包 seq=" + entry.seqNum
+                    + " 达到最大重传次数(" + MAX_RETRANSMIT_COUNT + ")，放弃");
                 pendingBuffer.remove(entry.seqNum);
                 continue;
             }
@@ -575,6 +585,11 @@ public class ReliableUdpTransport implements Transport {
                 }
             }
             return result;
+        }
+
+        /** 获取所有待确认包（用于指数退避逻辑，由调用方判断超时） */
+        public List<PendingEntry> getAllPending() {
+            return new ArrayList<>(entries.values());
         }
 
         /** 标记重传（更新发送时间和重传计数） */
