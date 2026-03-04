@@ -159,6 +159,12 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
         // 0. 配置日志等级
         configureLogLevel();
+        
+        // 0.1 配置日志文件输出
+        if (config.logOutput != null && !config.logOutput.trim().isEmpty()) {
+            DLog.registerLogOutput(new FileLogOutput(config.logOutput.trim()));
+            DLog.logT("Server", "日志输出到文件: " + config.logOutput);
+        }
 
         // 1. 初始化网络传输层
         rawTransport = new UdpSocketTransport(true); // isServer = true
