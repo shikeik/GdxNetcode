@@ -69,7 +69,21 @@ public class ServerConfig {
             try (FileInputStream fis = new FileInputStream(propsFile)) {
                 Properties props = new Properties();
                 props.load(fis);
-                config.port        = getInt(props, "server.port", config.port);
+                
+                // 特殊处理端口: 留空则使用随机端口(0)
+                String portVal = props.getProperty("server.port");
+                if (portVal != null) {
+                    if (portVal.trim().isEmpty()) {
+                        config.port = 0;
+                    } else {
+                        try {
+                            config.port = Integer.parseInt(portVal.trim());
+                        } catch (NumberFormatException e) {
+                            DLog.logWarn("ServerConfig", "端口格式错误: " + portVal + "，使用默认值 " + config.port);
+                        }
+                    }
+                }
+
                 config.maxPlayers  = getInt(props, "server.max-players", config.maxPlayers);
                 config.timeoutSec  = getInt(props, "server.timeout-sec", config.timeoutSec);
                 config.tickRate    = getInt(props, "server.tickrate", config.tickRate);

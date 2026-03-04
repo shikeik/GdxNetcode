@@ -189,7 +189,12 @@ public class SimulatedTransport implements Transport {
         this.connectionListener = listener;
     }
 
-    // ══════════════ 延迟模拟与投递 ══════════════
+    @Override
+    public int getLocalPort() {
+        return 0; // 模拟环境无真实端口
+    }
+
+    // ══════════════ 模拟核心逻辑 ══════════════
 
     /**
      * 将数据包入队（有延迟时）或立即投递（无延迟时）。

@@ -3,7 +3,8 @@
 
 dependencies {
     // GdxCore 引擎核心（mavenLocal / JitPack）
-    api "com.github.shikeik:GdxCore:${rootProject.findProperty('gdxCoreVersion')}"
+    // 修改为具体的 core 子模块，以便于本地 Composite Build 替换
+    api "com.github.shikeik.GdxCore:core:${rootProject.findProperty('gdxCoreVersion')}"
 
     // 测试
     testImplementation 'junit:junit:4.13.2'

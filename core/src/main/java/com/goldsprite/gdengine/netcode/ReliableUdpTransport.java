@@ -116,6 +116,11 @@ public class ReliableUdpTransport implements Transport {
     }
 
     @Override
+    public int getLocalPort() {
+        return rawTransport.getLocalPort();
+    }
+
+    @Override
     public void startServer(int port) {
         rawTransport.setReceiveCallback(this::onRawReceive);
         rawTransport.startServer(port);

@@ -32,6 +32,11 @@ public class LocalMemoryTransport implements Transport {
         this.connectionListener = listener;
     }
 
+    @Override
+    public int getLocalPort() {
+        return 0; // 内存模拟无真实端口
+    }
+
     public void connectToPeer(LocalMemoryTransport peer) {
         this.connectedPeer = peer;
         peer.connectedPeer = this;

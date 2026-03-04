@@ -100,6 +100,11 @@ public class UdpSocketTransport implements Transport {
     public boolean isServerDisconnectReceived() { return serverDisconnectReceived; }
 
     @Override
+    public int getLocalPort() {
+        return socket != null ? socket.getLocalPort() : 0;
+    }
+
+    @Override
     public void startServer(int port) {
         if (!isServerIdentity) return;
         try {

@@ -8,6 +8,7 @@ import java.util.Set;
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
 import com.goldsprite.gdengine.log.DLog;
+import com.goldsprite.gdengine.log.FileLogOutput;
 import com.goldsprite.gdengine.netcode.NetworkConnectionListener;
 import com.goldsprite.gdengine.netcode.NetworkManager;
 import com.goldsprite.gdengine.netcode.ReliableUdpTransport;
@@ -161,9 +162,9 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
         configureLogLevel();
         
         // 0.1 配置日志文件输出
-        if (config.logOutput != null && !config.logOutput.trim().isEmpty()) {
-            DLog.registerLogOutput(new FileLogOutput(config.logOutput.trim()));
-            DLog.logT("Server", "日志输出到文件: " + config.logOutput);
+        if (config.logFile != null && !config.logFile.trim().isEmpty()) {
+            DLog.registerLogOutput(new FileLogOutput(config.logFile.trim()));
+            DLog.logT("Server", "日志输出到文件: " + config.logFile);
         }
 
         // 1. 初始化网络传输层
@@ -206,6 +207,10 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
         // 5. 启动服务器监听
         transport.startServer(config.port);
+        // 若使用了随机端口(0)，更新 config.port 为实际绑定的端口
+        if (config.port == 0) {
+            config.port = transport.getLocalPort();
+        }
 
         // 6. 子类初始化游戏逻辑
         initGameLogic(config);
@@ -389,8 +394,14 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
                 @Override
                 public void onJoined() {
-                    DLog.logT("Server", "已加入云大厅频道，正在发布房间...");
-                    publishServerRoom();
+                    if (roomInfo != null) {
+                        // 重连场景：直接恢复发布现有房间信息，跳过 IP 探测
+                        lobbyManager.publishRoom(roomInfo);
+                        DLog.logT("Server", "重新加入云大厅，已恢复房间发布");
+                    } else {
+                        DLog.logT("Server", "已加入云大厅频道，正在发布房间...");
+                        publishServerRoom();
+                    }
                 }
 
                 @Override

@@ -25,4 +25,10 @@ public interface Transport {
      * Client 端：收到 Server 分配的 clientId 时触发 onClientConnected(assignedClientId)。
      */
     void setConnectionListener(NetworkConnectionListener listener);
+
+    /**
+     * 获取本地绑定的端口。
+     * @return 端口号，若未绑定则返回 0
+     */
+    int getLocalPort();
 }
