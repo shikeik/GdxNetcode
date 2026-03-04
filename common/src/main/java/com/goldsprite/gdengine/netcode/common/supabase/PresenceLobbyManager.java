@@ -343,6 +343,9 @@ public class PresenceLobbyManager {
             room.maxPlayers = meta.getInt("maxPlayers", 6);
             room.status = meta.getString("status", "waiting");
             room.gameVersion = meta.getString("gameVersion", "");
+            
+            DLog.logT(TAG, "解析房间元数据 (key=" + key + "): ver=" + room.gameVersion + ", json=" + meta.toString());
+            
             return room;
         } catch (Exception e) {
             DLog.logErrT(TAG, "解析 Presence 条目失败 (key=" + key + "): " + e);
@@ -376,7 +379,10 @@ public class PresenceLobbyManager {
         sb.append(",\"status\":\"").append(escapeJson(info.status)).append("\"");
         sb.append(",\"gameVersion\":\"").append(escapeJson(info.gameVersion)).append("\"");
         sb.append("}");
-        return sb.toString();
+        
+        String jsonStr = sb.toString();
+        DLog.logT(TAG, "构建房间 JSON (Publish): " + jsonStr);
+        return jsonStr;
     }
 
     /** 简易 JSON 字符串转义 */
