@@ -402,11 +402,50 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
     /**
      * 获取公网 IP 并发布房间到 Presence 大厅。
-     * 若公网 IP 获取失败，则使用局域网 IP 作为 fallback。
+     * <p>
+     * 若 {@code config.publicAddress} 非空（格式 ip:port），则直接使用该地址，
+     * 适用于 NAT/FRP 场景（如 sakura-frp）。
+     * 否则自动探测公网 IP；若探测失败则使用局域网 IP 作为 fallback。
      */
     private void publishServerRoom() {
         final String localIp = PublicIPResolver.getLocalIP();
 
+        // ── 若配置了 NAT/FRP 公网地址，直接使用 ──
+        if (config.publicAddress != null && !config.publicAddress.isEmpty()) {
+            String addr = config.publicAddress;
+            String frpIp;
+            int frpPort;
+            int colonIdx = addr.lastIndexOf(':');
+            if (colonIdx > 0 && colonIdx < addr.length() - 1) {
+                frpIp = addr.substring(0, colonIdx);
+                try {
+                    frpPort = Integer.parseInt(addr.substring(colonIdx + 1));
+                } catch (NumberFormatException e) {
+                    DLog.logWarn("ServerConfig", "public-address 端口格式错误: " + addr + "，回退自动检测");
+                    publishServerRoomAutoDetect(localIp);
+                    return;
+                }
+            } else {
+                // 没有端口部分，使用 config.port
+                frpIp = addr;
+                frpPort = config.port;
+            }
+            roomInfo = new PresenceRoomInfo(
+                config.roomName, frpIp, localIp, frpPort,
+                getOnlinePlayerCount(), config.maxPlayers
+            );
+            lobbyManager.publishRoom(roomInfo);
+            DLog.logT("Server", "房间已发布到云大厅(FRP): " + config.roomName
+                + " | 公网=" + frpIp + ":" + frpPort + " 局域网=" + localIp);
+            return;
+        }
+
+        // ── 默认：自动探测公网 IP ──
+        publishServerRoomAutoDetect(localIp);
+    }
+
+    /** 通过 PublicIPResolver 自动探测公网 IP 并发布房间。 */
+    private void publishServerRoomAutoDetect(final String localIp) {
         PublicIPResolver.resolvePublicIP(new PublicIPResolver.ResolveCallback() {
             @Override
             public void onSuccess(final String publicIp) {
