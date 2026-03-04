@@ -37,6 +37,10 @@ public class ServerConsole extends Thread {
         this.server = server;
         this.startTimeMs = System.currentTimeMillis();
 
+        // 优化日志输出：移除默认输出，使用带提示符优化的输出
+        DLog.removeLogOutput(DLog.StandardOutput.class);
+        DLog.registerLogOutput(new ConsoleLogOutput());
+
         // 注册内置命令
         registerBuiltinCommands();
     }
@@ -55,6 +59,8 @@ public class ServerConsole extends Thread {
     @Override
     public void run() {
         Scanner scanner = new Scanner(System.in);
+        // 初始提示符
+        System.out.print("> ");
         while (running) {
             try {
                 if (!scanner.hasNextLine()) {
@@ -62,12 +68,28 @@ public class ServerConsole extends Thread {
                     break;
                 }
                 String line = scanner.nextLine().trim();
-                if (line.isEmpty()) continue;
+                
+                // 处理完一行输入后，如果是非空命令，通常会有输出，
+                // 输出结束后需要重新打印提示符（在下一次循环开头处理，或者这里处理）
+                // 但考虑到日志随时可能插入，我们在循环开头打印提示符比较合适？
+                // 不，scanner.nextLine() 阻塞期间日志可能会打印提示符。
+                // 如果我们在这里打印，那是在命令执行完后。
+                // 如果日志在执行期间打印，它会补一个 >。
+                // 如果没有日志，我们需要补一个 >。
+                // 但是如果在循环开头打印，那 nextLine 返回后，处理完，回到开头，打印 >，然后阻塞。这是对的。
+                
+                if (line.isEmpty()) {
+                    System.out.print("> ");
+                    continue;
+                }
 
                 // ── / 前缀自动剥除（兼容 MC 风格输入） ──
                 if (line.startsWith("/")) {
                     line = line.substring(1).trim();
-                    if (line.isEmpty()) continue;
+                    if (line.isEmpty()) {
+                        System.out.print("> ");
+                        continue;
+                    }
                 }
 
                 // ── 统一走命令表路由 ──
@@ -81,9 +103,14 @@ public class ServerConsole extends Thread {
                 } else {
                     System.out.println("未知命令: " + cmd + "。输入 'help' 查看可用命令。");
                 }
+                
+                // 命令执行完毕，打印提示符等待下一条
+                System.out.print("> ");
+                
             } catch (Exception e) {
                 if (running) {
                     DLog.logWarn("Console", "命令处理异常: " + e.getMessage());
+                    // 异常日志会自带 >，这里不需要补
                 }
             }
         }
@@ -203,9 +230,30 @@ public class ServerConsole extends Thread {
                 System.out.println("  全局日志等级已设置为: " + level.name());
             }
         });
+
+        registerCommand("role", "显示当前服务器角色", args -> {
+            System.out.println("  当前角色: Server (Dedicated)");
+        });
     }
 
     // ══════════════ 内部类 ══════════════
+
+    /**
+     * 带输入提示符优化的日志输出端。
+     * 在每条日志输出前回到行首，输出后重新打印提示符，
+     * 防止日志直接插在用户输入后面导致混乱。
+     */
+    private static class ConsoleLogOutput extends DLog.StandardOutput {
+        @Override
+        public void onLog(DLog.Level level, String tag, String msg) {
+            // 回到行首清除当前输入行的显示（虽然 buffer 还在但不可见）
+            // 如果终端支持 ANSI，可以使用 \033[2K 清除整行
+            System.out.print("\r"); 
+            super.onLog(level, tag, msg);
+            // 重新打印提示符，等待用户输入
+            System.out.print("> ");
+        }
+    }
 
     /** 命令注册表条目 */
     private static class CommandEntry {

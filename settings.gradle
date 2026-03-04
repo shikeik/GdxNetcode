@@ -1,3 +1,16 @@
 rootProject.name = 'GdxNetcode'
 include ':core'
 include ':common'
+
+// 自动检测同级目录是否存在 GdxCore 项目，开启源码替换
+def localGdxCore = new File(rootDir, '../GdxCore')
+if (localGdxCore.exists()) {
+    println "[Settings] 检测到本地 GdxCore 项目，开启源码替换..."
+    includeBuild(localGdxCore) {
+        dependencySubstitution {
+            substitute module("com.github.shikeik.GdxCore:core") using project(':core')
+            substitute module("com.github.shikeik:GdxCore") using project(':')
+        }
+    }
+}
+
