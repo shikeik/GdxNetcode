@@ -295,6 +295,15 @@ public class PresenceLobbyManager {
         if (leaves != null) {
             for (JsonValue entry = leaves.child; entry != null; entry = entry.next) {
                 String key = entry.name;
+                // 注意: Phoenix Presence diff 可能同时包含 join 和 leave (如果是更新操作)
+                // 如果 join 已经处理了该 key，则 leave 不应再移除它
+                if (joins != null && joins.has(key)) {
+                    // 这是一个 update 操作 (先 leave 旧的，再 join 新的)，presenceState 已经被 join 更新了
+                    // 所以这里忽略 leave
+                    DLog.logT(TAG, "房间更新 (忽略 Leave): " + key);
+                    continue;
+                }
+                
                 PresenceRoomInfo removed = presenceState.remove(key);
                 if (removed != null) {
                     changed = true;
@@ -333,6 +342,7 @@ public class PresenceLobbyManager {
             room.currentPlayers = meta.getInt("currentPlayers", 1);
             room.maxPlayers = meta.getInt("maxPlayers", 6);
             room.status = meta.getString("status", "waiting");
+            room.gameVersion = meta.getString("gameVersion", "");
             return room;
         } catch (Exception e) {
             DLog.logErrT(TAG, "解析 Presence 条目失败 (key=" + key + "): " + e);
@@ -364,6 +374,7 @@ public class PresenceLobbyManager {
         sb.append(",\"currentPlayers\":").append(info.currentPlayers);
         sb.append(",\"maxPlayers\":").append(info.maxPlayers);
         sb.append(",\"status\":\"").append(escapeJson(info.status)).append("\"");
+        sb.append(",\"gameVersion\":\"").append(escapeJson(info.gameVersion)).append("\"");
         sb.append("}");
         return sb.toString();
     }
