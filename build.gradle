@@ -2,6 +2,9 @@
 // 模块: core (Transport / RPC / NetworkManager), common (Lobby / Chat / HeadlessServer)
 // 定位: 可复用的通用网络库，不包含任何游戏业务逻辑
 
+// JitPack 环境下跳过 GdxGradle 插件（仅工具任务，publishToMavenLocal 不需要）
+def isJitPack = System.getenv("JITPACK") == "true"
+
 buildscript {
     repositories {
         google()
@@ -13,17 +16,20 @@ buildscript {
         maven { url "https://jitpack.io" }
     }
     dependencies {
-        classpath 'com.github.shikeik:GdxGradle:0.9.0'
+        if (System.getenv("JITPACK") != "true") {
+            classpath 'com.github.shikeik:GdxGradle:0.9.0'
+        }
     }
 }
 
 subprojects {
     apply plugin: 'java-library'
     apply plugin: 'maven-publish'
-    apply plugin: 'com.goldsprite.gdx-tasks'
-
-    gdxTasks {
-        taskGroup = 'gdxnetcode'
+    if (!isJitPack) {
+        apply plugin: 'com.goldsprite.gdx-tasks'
+        gdxTasks {
+            taskGroup = 'gdxnetcode'
+        }
     }
 
     group = "${rootProject.findProperty('jitpackGroup')}"
