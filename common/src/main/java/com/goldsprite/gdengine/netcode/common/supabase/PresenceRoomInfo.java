@@ -32,6 +32,9 @@ public class PresenceRoomInfo {
     /** Presence Key (频道内唯一标识，由 PresenceLobbyManager 自动填充) */
     public String presenceKey = "";
 
+    /** 房间服务器的游戏构建版本号（如 "0.9.1"，用于大厅截受版本匹配检查） */
+    public String gameVersion = "";
+
     public PresenceRoomInfo() {
     }
 
@@ -68,6 +71,7 @@ public class PresenceRoomInfo {
             ", hostPort=" + hostPort +
             ", players=" + currentPlayers + "/" + maxPlayers +
             ", status='" + status + '\'' +
+            ", gameVersion='" + gameVersion + '\'' +
             ", key='" + presenceKey + '\'' +
             '}';
     }
