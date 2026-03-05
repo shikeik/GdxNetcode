@@ -2,6 +2,8 @@ package com.goldsprite.gdengine.netcode.common.headless;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
 import com.goldsprite.gdengine.log.DLog;
@@ -62,15 +64,44 @@ public class ServerConfig {
      * @param args main() 传入的命令行参数
      * @return 合并后的配置实例
      */
+    /**
+     * 从默认工作目录下的 server.properties 加载配置（Server 模式）。
+     */
     public static ServerConfig load(String[] args) {
+        return loadFromFile(new File("server.properties"), args);
+    }
+
+    /**
+     * Host 模式专用加载：从指定文件加载配置，无命令行参数。
+     * <p>
+     * Host 配置实例的公共字段可被 UI 覆写（如房间名、端口），
+     * 修改后直接传递给游戏屏幕，为后续房间/玩家元数据持久化做准备。
+     *
+     * @param propsFile host.properties 文件（不存在时返回纯默认配置）
+     * @return 可被 UI 继续修改的配置实例
+     */
+    public static ServerConfig loadForHost(File propsFile) {
+        return loadFromFile(propsFile, new String[0]);
+    }
+
+    /**
+     * 从指定文件加载配置（支持 UTF-8 编码）。
+     * <p>
+     * 加载优先级: 代码默认值 → properties 文件 → 命令行参数。
+     *
+     * @param propsFile properties 文件
+     * @param args      命令行参数
+     * @return 合并后的配置实例
+     */
+    public static ServerConfig loadFromFile(File propsFile, String[] args) {
         ServerConfig config = new ServerConfig();
 
-        // ── 1. 尝试加载 server.properties ──
-        File propsFile = new File("server.properties");
-        if (propsFile.exists()) {
-            try (FileInputStream fis = new FileInputStream(propsFile)) {
+        // ── 1. 尝试加载 properties 文件（UTF-8 编码） ──
+        if (propsFile != null && propsFile.exists()) {
+            try (InputStreamReader reader = new InputStreamReader(
+                    new FileInputStream(propsFile), StandardCharsets.UTF_8)) {
                 Properties props = new Properties();
-                props.load(fis);
+                props.load(reader);
                 
                 // 特殊处理端口: 留空则使用随机端口(0)
                 String portVal = props.getProperty("server.port");
@@ -97,9 +128,17 @@ public class ServerConfig {
                 config.roomName    = props.getProperty("server.room-name", config.roomName);
                 config.gameVersion  = props.getProperty("server.game-version", config.gameVersion);
                 config.publicAddress = props.getProperty("server.public-address", config.publicAddress).trim();
+                // lobby.hostAddress 是 server.public-address 的别名 (host.properties 常用写法)
+                // 仅当 server.public-address 未设置时才生效
+                if (config.publicAddress.isEmpty()) {
+                    String lobbyHostAddr = props.getProperty("lobby.hostAddress", "").trim();
+                    if (!lobbyHostAddr.isEmpty()) {
+                        config.publicAddress = lobbyHostAddr;
+                    }
+                }
                 config.logLevel    = props.getProperty("log.level", config.logLevel);
-                config.logFile     = props.getProperty("log.file", config.logFile);
-                DLog.log("ServerConfig", "已从 server.properties 加载配置");
+                config.logFile     = normalizeLogFile(props.getProperty("log.file", config.logFile));
+                DLog.log("ServerConfig", "已从 " + propsFile.getName() + " 加载配置");
             } catch (Exception e) {
                 DLog.logWarn("ServerConfig", "读取 server.properties 失败: " + e.getMessage());
             }
@@ -205,5 +244,39 @@ public class ServerConfig {
         } catch (NumberFormatException e) {
             return defaultValue;
         }
+    }
+
+    /**
+     * 规范化 log.file 配置值。
+     * <ul>
+     *   <li>"true" → "server.log"（便捷写法）</li>
+     *   <li>"false" / null / 空 → ""（仅控制台）</li>
+     *   <li>其他值保持原样（当作文件路径）</li>
+     * </ul>
+     */
+    static String normalizeLogFile(String value) {
+        if (value == null) return "";
+        String trimmed = value.trim();
+        if (trimmed.isEmpty() || "false".equalsIgnoreCase(trimmed)) return "";
+        if ("true".equalsIgnoreCase(trimmed)) return "server.log";
+        return trimmed;
+    }
+
+    /**
+     * 解析 "ip:port" 格式的地址字符串。
+     *
+     * @param address 地址字符串（如 "frp.example.com:12345" 或 "192.168.1.1"）
+     * @return 长度为 2 的数组: [host, port]。无端口时 port 为空字符串。
+     */
+    public static String[] parseHostPort(String address) {
+        if (address == null || address.trim().isEmpty()) {
+            return new String[]{"", ""};
+        }
+        String trimmed = address.trim();
+        int colonIdx = trimmed.lastIndexOf(':');
+        if (colonIdx > 0) {
+            return new String[]{trimmed.substring(0, colonIdx), trimmed.substring(colonIdx + 1)};
+        }
+        return new String[]{trimmed, ""};
     }
 }

@@ -4,6 +4,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
@@ -59,6 +60,8 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
     // ── 关闭标志 ──
     private volatile boolean shutdownRequested = false;
+    /** B4-3: 防止 dispose() 重入（performShutdown + 框架 exit 会双调） */
+    private final AtomicBoolean disposed = new AtomicBoolean(false);
 
     // ══════════════════════════════════════════
     //  构造
@@ -255,6 +258,9 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
     @Override
     public void dispose() {
+        // B4-3: 防止重入（performShutdown 手动调 dispose + Gdx.app.exit 框架再调一次）
+        if (!disposed.compareAndSet(false, true)) return;
+
         if (lobbyManager != null) {
             lobbyManager.disconnect();
             lobbyManager = null;
