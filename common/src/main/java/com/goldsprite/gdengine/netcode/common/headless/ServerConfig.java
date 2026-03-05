@@ -41,6 +41,8 @@ public class ServerConfig {
     public boolean enableLobby = true;
     /** 房间显示名称 */
     public String roomName = "Dedicated Server";
+    /** 游戏构建版本号（发布到云大厅，供客户端版本匹配） */
+    public String gameVersion = "";
     /**
      * NAT/FRP 公网地址（可选），格式: ip:port。
      * 非空时 publishServerRoom 将使用此地址替代自动探测的公网 IP。
@@ -93,6 +95,7 @@ public class ServerConfig {
                 config.enableLobby = Boolean.parseBoolean(
                         props.getProperty("server.enable-lobby", String.valueOf(config.enableLobby)));
                 config.roomName    = props.getProperty("server.room-name", config.roomName);
+                config.gameVersion  = props.getProperty("server.game-version", config.gameVersion);
                 config.publicAddress = props.getProperty("server.public-address", config.publicAddress).trim();
                 config.logLevel    = props.getProperty("log.level", config.logLevel);
                 config.logFile     = props.getProperty("log.file", config.logFile);
@@ -136,6 +139,9 @@ public class ServerConfig {
                 case "--public-address":
                     config.publicAddress = args[++i].trim();
                     break;
+                case "--game-version":
+                    config.gameVersion = args[++i];
+                    break;
                 case "--no-lobby":
                     config.enableLobby = false;
                     break;
@@ -166,6 +172,7 @@ public class ServerConfig {
         System.out.println("  --log-level <级别>   日志级别: DEBUG/INFO/WARN/ERROR (默认: INFO)");
         System.out.println("  --log-file <路径>    日志输出文件 (默认: 仅控制台)");
         System.out.println("  --room-name <名称>   房间显示名称 (默认: Dedicated Server)");
+        System.out.println("  --game-version <版本> 游戏构建版本号 (默认: 空)");
         System.out.println("  --public-address <地址> NAT/FRP 公网地址 ip:port (默认: 自动检测)");
         System.out.println("  --no-lobby           禁用云大厅注册 (仅局域网/直连)");
         System.out.println("  --help               显示此帮助信息");
@@ -183,6 +190,7 @@ public class ServerConfig {
                 ", logLevel='" + logLevel + '\'' +
                 ", enableLobby=" + enableLobby +
                 ", roomName='" + roomName + '\'' +
+                ", gameVersion='" + gameVersion + '\'' +
                 ", publicAddress='" + publicAddress + '\'' +
                 '}';
     }

@@ -453,6 +453,7 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
                 config.roomName, frpIp, localIp, frpPort,
                 getOnlinePlayerCount(), config.maxPlayers
             );
+            roomInfo.gameVersion = config.gameVersion;
             lobbyManager.publishRoom(roomInfo);
             DLog.logT("Server", "房间已发布到云大厅(FRP): " + config.roomName
                 + " | 公网=" + frpIp + ":" + frpPort + " 局域网=" + localIp);
@@ -473,6 +474,7 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
                         config.roomName, publicIp, localIp, config.port,
                         getOnlinePlayerCount(), config.maxPlayers
                     );
+                    roomInfo.gameVersion = config.gameVersion;
                     lobbyManager.publishRoom(roomInfo);
                     DLog.logT("Server", "房间已发布到云大厅: " + config.roomName
                         + " | 公网=" + publicIp + " 局域网=" + localIp
@@ -488,6 +490,7 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
                         config.roomName, localIp, localIp, config.port,
                         getOnlinePlayerCount(), config.maxPlayers
                     );
+                    roomInfo.gameVersion = config.gameVersion;
                     lobbyManager.publishRoom(roomInfo);
                     DLog.logT("Server", "房间已发布到云大厅(局域网): " + config.roomName
                         + " | IP=" + localIp + " 端口=" + config.port);
