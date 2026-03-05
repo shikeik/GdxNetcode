@@ -3,7 +3,12 @@ include ':core'
 include ':common'
 
 // === 本地 Composite Build 开发模式 ===
-apply from: new File(rootDir, '../GdxGradle/composite-build.settings.gradle')
+def _compositeBuildScript = new File(rootDir, '../GdxGradle/composite-build.settings.gradle')
+if (_compositeBuildScript.exists()) {
+    apply from: _compositeBuildScript
+} else {
+    ext.autoIncludeLocalLib = { String relativePath, String group, String umbrellaId -> /* JitPack 回退 */ }
+}
 
 autoIncludeLocalLib('../GdxGradle',    'com.github.shikeik',              'com.github.shikeik:GdxGradle')
 autoIncludeLocalLib('../GdxCore',      'com.github.shikeik.GdxCore',      'com.github.shikeik:GdxCore')
