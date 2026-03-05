@@ -141,29 +141,66 @@ public class ReliableUdpTransportTest {
     }
 
     /**
-     * 测试7: 最大重传次数后标记为失败
+     * 测试7: PendingEntry 记录 firstSendTime，重传不改变它
+     * A1 改造: 超时判定基于 firstSendTime（总耗时），而非重传次数
      */
     @Test
-    public void testMaxRetransmissions() {
-        System.out.println("======= [TDD] 最大重传次数 =======");
+    public void testPendingEntryFirstSendTime() {
+        System.out.println("======= [TDD] PendingEntry firstSendTime =======");
 
         ReliableUdpTransport.PendingPacketBuffer buffer = new ReliableUdpTransport.PendingPacketBuffer();
-        long now = System.currentTimeMillis();
+        long t0 = 10000L; // 首次发送时间
         byte[] data = new byte[]{0x01};
 
-        buffer.add(1, data, now - 300);
+        buffer.add(1, data, t0);
 
-        // 模拟 5 次重传
-        for (int i = 0; i < 5; i++) {
-            var timeouts = buffer.getTimedOut(now + i * 300, 200);
-            if (!timeouts.isEmpty()) {
-                buffer.markRetransmitted(1, now + i * 300);
-            }
-        }
+        // 首次发送后，firstSendTime 和 lastSendTime 都应等于 t0
+        var pending = buffer.getAllPending();
+        CLogAssert.assertEquals("应有 1 个待确认包", 1, pending.size());
+        ReliableUdpTransport.PendingEntry entry = pending.get(0);
+        CLogAssert.assertEquals("firstSendTime 应为 t0", t0, entry.firstSendTime);
+        CLogAssert.assertEquals("lastSendTime 应为 t0", t0, entry.lastSendTime);
 
-        CLogAssert.assertTrue("5 次重传后应标记为失败", buffer.isMaxRetriesExceeded(1, 5));
+        // 模拟重传: lastSendTime 更新，firstSendTime 不变
+        long t1 = t0 + 300;
+        buffer.markRetransmitted(1, t1);
+        pending = buffer.getAllPending();
+        entry = pending.get(0);
+        CLogAssert.assertEquals("重传后 firstSendTime 不变", t0, entry.firstSendTime);
+        CLogAssert.assertEquals("重传后 lastSendTime 更新", t1, entry.lastSendTime);
+        CLogAssert.assertEquals("重传次数应为 1", 1, entry.retransmitCount);
 
-        System.out.println("======= [TDD] 最大重传次数 通过 =======");
+        System.out.println("======= [TDD] PendingEntry firstSendTime 通过 =======");
+    }
+
+    /**
+     * 测试7b: 总超时检测（替代旧的最大重传次数）
+     * A1 改造: isTotalTimeoutExceeded 基于 firstSendTime + RELIABLE_TIMEOUT_MS
+     */
+    @Test
+    public void testTotalTimeoutExceeded() {
+        System.out.println("======= [TDD] 总超时检测 =======");
+
+        ReliableUdpTransport.PendingPacketBuffer buffer = new ReliableUdpTransport.PendingPacketBuffer();
+        long t0 = 10000L;
+        byte[] data = new byte[]{0x01};
+        long timeoutMs = 15000L;
+
+        buffer.add(1, data, t0);
+
+        // 14秒后: 还没超时
+        CLogAssert.assertFalse("14s 后不应超时",
+            buffer.isTotalTimeoutExceeded(1, t0 + 14000, timeoutMs));
+
+        // 15秒后: 恰好超时
+        CLogAssert.assertTrue("15s 后应超时",
+            buffer.isTotalTimeoutExceeded(1, t0 + 15000, timeoutMs));
+
+        // 20秒后: 超时
+        CLogAssert.assertTrue("20s 后应超时",
+            buffer.isTotalTimeoutExceeded(1, t0 + 20000, timeoutMs));
+
+        System.out.println("======= [TDD] 总超时检测 通过 =======");
     }
 
     // ========== 乱序丢弃测试 ==========
@@ -289,5 +326,67 @@ public class ReliableUdpTransportTest {
         client.disconnect();
 
         System.out.println("======= [TDD] 端到端 Reliable 传输 通过 =======");
+    }
+
+    // ========== A1 指数退避测试 ==========
+
+    /**
+     * 测试12: 指数退避间隔计算
+     * 验证 min(BASE * BACKOFF^n, MAX_INTERVAL) 产生正确的重传间隔序列。
+     * 期望: 200→300→450→675→1012→1518→2000(封顶)→2000...
+     */
+    @Test
+    public void testExponentialBackoffIntervals() {
+        System.out.println("======= [TDD] 指数退避间隔 =======");
+
+        // 使用 ReliableUdpTransport 暴露的退避计算方法
+        long base = 200;
+        double backoff = 1.5;
+        long maxInterval = 2000;
+
+        long[] expected = {200, 300, 450, 675, 1012, 1518, 2000, 2000};
+        for (int n = 0; n < expected.length; n++) {
+            long interval = ReliableUdpTransport.calcBackoffInterval(n, base, backoff, maxInterval);
+            CLogAssert.assertEquals(
+                "n=" + n + " 退避间隔应为 " + expected[n],
+                expected[n], interval);
+        }
+
+        System.out.println("======= [TDD] 指数退避间隔 通过 =======");
+    }
+
+    /**
+     * 测试13: 指数退避重传 — 在超时前持续重传（无次数硬限制）
+     * 验证 PendingPacketBuffer 在总超时前不会自行移除条目。
+     */
+    @Test
+    public void testNoMaxRetryLimit_ContinuesUntilTimeout() {
+        System.out.println("======= [TDD] 无次数硬限制 =======");
+
+        ReliableUdpTransport.PendingPacketBuffer buffer = new ReliableUdpTransport.PendingPacketBuffer();
+        long t0 = 10000L;
+        byte[] data = new byte[]{0x01};
+        long timeoutMs = 15000L;
+
+        buffer.add(1, data, t0);
+
+        // 模拟 20 次重传（远超旧的 5 次限制）
+        long t = t0;
+        for (int i = 0; i < 20; i++) {
+            t += 300;
+            buffer.markRetransmitted(1, t);
+        }
+
+        // 20 次重传后，条目仍在缓冲区（未超总超时 15s）
+        CLogAssert.assertEquals("20 次重传后缓冲区仍有 1 个条目", 1, buffer.size());
+        CLogAssert.assertEquals("重传次数应为 20", 20, buffer.getAllPending().get(0).retransmitCount);
+
+        // 但如果 totalElapsed >= 15s，则应报超时
+        CLogAssert.assertFalse("6s 后还没超时",
+            buffer.isTotalTimeoutExceeded(1, t0 + 6000, timeoutMs));
+        CLogAssert.assertTrue("15s 后应超时",
+            buffer.isTotalTimeoutExceeded(1, t0 + 15000, timeoutMs));
+
+        System.out.println("======= [TDD] 无次数硬限制 通过 =======");
     }
 }

@@ -37,14 +37,15 @@ public class ReliableUdpTransport implements Transport {
     private static final int SEQ_MAX = 65536;
     private static final int SEQ_HALF = SEQ_MAX / 2;
 
-    // ── 常规包重传参数（固定间隔，快速判定断线） ──
-    private static final long RETRANSMIT_TIMEOUT_MS = 200;
-    private static final int MAX_RETRANSMIT_COUNT = 5;
-
-    // ── 首包(seq=0)重传参数（指数退避，容忍对端未就绪） ──
-    private static final long FIRST_PKT_BASE_TIMEOUT_MS = 200;
-    private static final int FIRST_PKT_MAX_RETRANSMIT = 10;
-    private static final long FIRST_PKT_MAX_TIMEOUT_MS = 3000;
+    // ── 可靠包指数退避重传参数（A1 改造: ACK 持续确认制） ──
+    /** 首次重传基础间隔(ms) */
+    public static final long RETRANSMIT_BASE_MS = 200;
+    /** 每次重传间隔乘以此退避因子 */
+    public static final double RETRANSMIT_BACKOFF = 1.5;
+    /** 单次重传间隔上限(ms)，退避不超过此值 */
+    public static final long RETRANSMIT_MAX_INTERVAL_MS = 2000;
+    /** 可靠包总超时(ms): 从首次发送算起，超过此时间未收到 ACK 则触发断连 */
+    public static final long RELIABLE_TIMEOUT_MS = 15_000;
 
     // 被装饰的原始 UDP 传输层
     private final UdpSocketTransport rawTransport;
@@ -54,6 +55,28 @@ public class ReliableUdpTransport implements Transport {
 
     // 连接事件监听器
     private NetworkConnectionListener userConnectionListener;
+
+    // ── 可靠超时回调 ──
+    /** 可靠包超时回调: 某个 Reliable 包持续未收到 ACK 超过 RELIABLE_TIMEOUT_MS */
+    private ReliableTimeoutCallback reliableTimeoutCallback;
+
+    /**
+     * 可靠包超时回调接口。
+     * 当某个 Reliable 包超过总超时仍未收到 ACK 时触发，
+     * 通常意味着对端已断线，上层应启动断连/重连流程。
+     */
+    public interface ReliableTimeoutCallback {
+        /**
+         * @param seqNum         超时包的序列号
+         * @param retransmitCount 该包已重传的次数
+         */
+        void onReliableTimeout(int seqNum, int retransmitCount);
+    }
+
+    /** 设置可靠包超时回调 */
+    public void setReliableTimeoutCallback(ReliableTimeoutCallback callback) {
+        this.reliableTimeoutCallback = callback;
+    }
 
     // ── 发送端 ──
     /** 发送端递增序列号 */
@@ -347,8 +370,12 @@ public class ReliableUdpTransport implements Transport {
     }
 
     /**
-     * 每帧调用: 检查超时重传。
+     * 每帧调用: 检查超时重传（指数退避 + 总超时断连）。
      * 由 NetworkManager 或游戏层在主循环中调用。
+     *
+     * A1 改造: 不再使用固定重传次数上限，而是:
+     * - 每次重传间隔 = min(BASE * BACKOFF^n, MAX_INTERVAL)
+     * - 总超时 = firstSendTime + RELIABLE_TIMEOUT_MS → 触发 onReliableTimeout
      */
     public void tickReliable() {
         // Client 端定期发送 Ping（维持心跳 + 测量 RTT）
@@ -358,30 +385,23 @@ public class ReliableUdpTransport implements Transport {
         List<PendingEntry> entries = pendingBuffer.getAllPending();
 
         for (PendingEntry entry : entries) {
-            boolean isFirstPacket = (entry.seqNum == 0);
-            long timeout;
-            int maxRetries;
+            long totalElapsed = now - entry.firstSendTime;
 
-            if (isFirstPacket) {
-                // 首包: 指数退避，容忍对端启动延迟
-                timeout = Math.min(
-                    FIRST_PKT_BASE_TIMEOUT_MS * (1L << Math.min(entry.retransmitCount, 10)),
-                    FIRST_PKT_MAX_TIMEOUT_MS);
-                maxRetries = FIRST_PKT_MAX_RETRANSMIT;
-            } else {
-                // 常规包: 固定间隔，快速判定丢包/断线
-                timeout = RETRANSMIT_TIMEOUT_MS;
-                maxRetries = MAX_RETRANSMIT_COUNT;
-            }
-
-            if (now - entry.lastSendTime < timeout) continue; // 未超时，跳过
-
-            if (entry.retransmitCount >= maxRetries) {
+            // 总超时 → 触发断连（不再是"放弃这个包"）
+            if (totalElapsed >= RELIABLE_TIMEOUT_MS) {
                 DLog.logT("Netcode", "[ReliableUDP] 包 seq=" + entry.seqNum
-                    + " 达到最大重传次数(" + maxRetries + ")，放弃");
+                    + " 总超时(" + totalElapsed + "ms >= " + RELIABLE_TIMEOUT_MS + "ms)，触发断连");
                 pendingBuffer.remove(entry.seqNum);
+                onReliableTimeout(entry);
                 continue;
             }
+
+            // 指数退避: 计算本次应等待的重传间隔
+            long interval = calcBackoffInterval(
+                entry.retransmitCount, RETRANSMIT_BASE_MS,
+                RETRANSMIT_BACKOFF, RETRANSMIT_MAX_INTERVAL_MS);
+
+            if (now - entry.lastSendTime < interval) continue; // 未到重传时机
 
             // 重传
             if (rawTransport.isServer()) {
@@ -390,6 +410,18 @@ public class ReliableUdpTransport implements Transport {
                 rawTransport.sendToServer(entry.packetData);
             }
             pendingBuffer.markRetransmitted(entry.seqNum, now);
+        }
+    }
+
+    /**
+     * 可靠包超时回调: 当某个 Reliable 包超过 RELIABLE_TIMEOUT_MS 仍未收到 ACK。
+     * 意味着对端可能已断线，通知上层进行断连处理。
+     */
+    private void onReliableTimeout(PendingEntry timedOutEntry) {
+        DLog.logT("Netcode", "[ReliableUDP] onReliableTimeout: seq=" + timedOutEntry.seqNum
+            + " retransmits=" + timedOutEntry.retransmitCount);
+        if (reliableTimeoutCallback != null) {
+            reliableTimeoutCallback.onReliableTimeout(timedOutEntry.seqNum, timedOutEntry.retransmitCount);
         }
     }
 
@@ -497,6 +529,22 @@ public class ReliableUdpTransport implements Transport {
     // ========== 静态工具方法 ==========
 
     /**
+     * 计算第 n 次重传的指数退避间隔(ms)。
+     * 公式: min(base * backoff^n, maxInterval)
+     * @param retransmitCount 当前重传次数（0=第一次重传）
+     * @param baseMs          基础间隔(ms)
+     * @param backoff         退避因子
+     * @param maxIntervalMs   单次间隔上限(ms)
+     * @return 本次重传应等待的间隔(ms)
+     */
+    public static long calcBackoffInterval(int retransmitCount, long baseMs,
+                                           double backoff, long maxIntervalMs) {
+        return Math.min(
+            (long) (baseMs * Math.pow(backoff, retransmitCount)),
+            maxIntervalMs);
+    }
+
+    /**
      * 判断序列号 a 是否新于 b（支持 16-bit 循环）。
      * 使用半空间比较法: 如果 (a - b) mod 65536 < 32768，则 a 新于 b。
      */
@@ -553,12 +601,16 @@ public class ReliableUdpTransport implements Transport {
     public static class PendingEntry {
         public final int seqNum;
         public final byte[] packetData;
+        /** 首次发送时间（创建时记录，重传不修改） */
+        public final long firstSendTime;
+        /** 最近一次发送时间（每次重传更新） */
         public long lastSendTime;
         public int retransmitCount;
 
         public PendingEntry(int seqNum, byte[] packetData, long sendTime) {
             this.seqNum = seqNum;
             this.packetData = packetData;
+            this.firstSendTime = sendTime;
             this.lastSendTime = sendTime;
             this.retransmitCount = 0;
         }
@@ -620,10 +672,10 @@ public class ReliableUdpTransport implements Transport {
             }
         }
 
-        /** 检查是否超过最大重传次数 */
-        public boolean isMaxRetriesExceeded(int seqNum, int maxRetries) {
+        /** 检查是否超过总超时（基于 firstSendTime） */
+        public boolean isTotalTimeoutExceeded(int seqNum, long now, long timeoutMs) {
             PendingEntry entry = entries.get(seqNum);
-            return entry != null && entry.retransmitCount >= maxRetries;
+            return entry != null && (now - entry.firstSendTime >= timeoutMs);
         }
     }
 
