@@ -5,7 +5,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import com.goldsprite.CLogAssert;
+import com.goldsprite.gdengine.test.CLogAssert;
 import com.goldsprite.GdxTestRunner;
 
 /**

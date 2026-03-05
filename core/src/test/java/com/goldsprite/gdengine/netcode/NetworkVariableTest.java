@@ -2,7 +2,7 @@ package com.goldsprite.gdengine.netcode;
 
 import org.junit.Test;
 
-import com.goldsprite.CLogAssert;
+import com.goldsprite.gdengine.test.CLogAssert;
 
 public class NetworkVariableTest {
 

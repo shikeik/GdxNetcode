@@ -5,7 +5,7 @@ import java.util.List;
 
 import org.junit.Test;
 
-import com.goldsprite.CLogAssert;
+import com.goldsprite.gdengine.test.CLogAssert;
 
 public class RpcMethodReflectionTest {
 

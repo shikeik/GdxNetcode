@@ -3,7 +3,7 @@ package com.goldsprite.gdengine.netcode;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import com.goldsprite.CLogAssert;
+import com.goldsprite.gdengine.test.CLogAssert;
 import com.goldsprite.GdxTestRunner;
 
 @RunWith(GdxTestRunner.class)
@@ -21,6 +21,7 @@ public class NetworkManagerTest {
         @Override public void sendToServer(byte[] payload) {}
         @Override public void setReceiveCallback(TransportReceiveCallback callback) {}
         @Override public void setConnectionListener(NetworkConnectionListener listener) {}
+        @Override public int getLocalPort() { return 0; }
         
         @Override
         public void broadcast(byte[] payload) {

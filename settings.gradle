@@ -14,3 +14,25 @@ if (localGdxCore.exists()) {
     }
 }
 
+def localGdxUI = new File(rootDir, '../GdxUI')
+if (localGdxUI.exists()) {
+    println "[Settings] 检测到本地 GdxUI 项目，开启源码替换..."
+    includeBuild(localGdxUI) {
+        dependencySubstitution {
+            substitute module("com.github.shikeik:GdxUI") using project(':')
+        }
+    }
+}
+
+// 自动检测同级目录是否存在 GdxTestUtils 项目，开启源码替换
+def localGdxTestUtils = new File(rootDir, '../GdxTestUtils')
+if (localGdxTestUtils.exists()) {
+    println "[Settings] 检测到本地 GdxTestUtils 项目，开启源码替换..."
+    includeBuild(localGdxTestUtils) {
+        dependencySubstitution {
+            substitute module("com.github.shikeik.GdxTestUtils:core") using project(':core')
+            substitute module("com.github.shikeik:GdxTestUtils") using project(':')
+        }
+    }
+}
+
