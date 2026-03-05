@@ -2,13 +2,12 @@
 // 模块: core (Transport / RPC / NetworkManager), common (Lobby / Chat / HeadlessServer)
 // 定位: 可复用的通用网络库，不包含任何游戏业务逻辑
 
-// JitPack 环境下跳过 GdxGradle 插件（仅工具任务，publishToMavenLocal 不需要）
+// JitPack 环境下跳过 GdxGradle 插件（仅工具任务，JitPack 构建不需要）
 def isJitPack = System.getenv("JITPACK") == "true"
 
 buildscript {
     repositories {
         google()
-        mavenLocal()
         mavenCentral()
         gradlePluginPortal()
         maven { url 'https://maven.aliyun.com/repository/public/' }
@@ -46,7 +45,6 @@ subprojects {
 
     repositories {
         google()
-        mavenLocal()
         mavenCentral()
         gradlePluginPortal()
         maven { url 'https://maven.aliyun.com/repository/public/' }

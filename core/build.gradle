@@ -2,7 +2,7 @@
 // Transport / RPC / NetworkManager / NetworkVariable / NetworkObject 等
 
 dependencies {
-    // GdxCore 引擎核心（mavenLocal / JitPack）
+    // GdxCore 引擎核心（Composite Build / JitPack）
     // 修改为具体的 core 子模块，以便于本地 Composite Build 替换
     api "com.github.shikeik.GdxCore:core:${rootProject.findProperty('gdxCoreVersion')}"
 
