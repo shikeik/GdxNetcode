@@ -394,14 +394,8 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
                 @Override
                 public void onJoined() {
-                    if (roomInfo != null) {
-                        // 重连场景：直接恢复发布现有房间信息，跳过 IP 探测
-                        lobbyManager.publishRoom(roomInfo);
-                        DLog.logT("Server", "重新加入云大厅，已恢复房间发布");
-                    } else {
-                        DLog.logT("Server", "已加入云大厅频道，正在发布房间...");
-                        publishServerRoom();
-                    }
+                    DLog.logT("Server", "已加入云大厅频道，正在发布房间...");
+                    publishServerRoom();
                 }
 
                 @Override
@@ -411,7 +405,15 @@ public abstract class HeadlessGameServer extends ApplicationAdapter {
 
                 @Override
                 public void onDisconnected(String reason) {
-                    DLog.logWarnT("Server", "云大厅连接断开: " + reason);
+                    DLog.logWarnT("Server", "云大厅连接断开, 正在自动重连...");
+                }
+
+                @Override
+                public void onReconnected(int attempts, long disconnectedMs) {
+                    if (roomInfo != null) {
+                        lobbyManager.publishRoom(roomInfo);
+                    }
+                    DLog.logInfoT("Server", "云大厅已重新连接并恢复房间发布 (重试" + attempts + "次, 断开" + (disconnectedMs / 1000) + "s)");
                 }
             }
         );

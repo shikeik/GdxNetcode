@@ -80,6 +80,9 @@ public class PresenceLobbyManager {
 
         /** 连接已断开 (可能正在重连) */
         void onDisconnected(String reason);
+
+        /** 自动重连成功 */
+        default void onReconnected(int attempts, long disconnectedMs) {}
     }
 
     // ==================== 构造 ====================
@@ -147,8 +150,14 @@ public class PresenceLobbyManager {
 
             @Override
             public void onDisconnected(int code, String reason) {
-                DLog.logT(TAG, "连接断开: " + reason);
+                DLog.logT(TAG, "连接断开, 等待自动重连...");
                 if (statusListener != null) statusListener.onDisconnected(reason);
+            }
+
+            @Override
+            public void onReconnected(int totalAttempts, long disconnectedMs) {
+                DLog.logInfoT(TAG, "已重新连接 (重试" + totalAttempts + "次, 断开" + (disconnectedMs / 1000) + "s)");
+                if (statusListener != null) statusListener.onReconnected(totalAttempts, disconnectedMs);
             }
         });
 

@@ -62,6 +62,16 @@ public class PhoenixChannel {
     private static final float BASE_RECONNECT_DELAY = 1f; // 秒
     private static final float MAX_RECONNECT_DELAY = 30f;
     private Timer.Task reconnectTask;
+    private boolean reconnecting = false;      // 是否处于重连周期中
+    private long disconnectTimestamp = 0;       // 断开时间戳
+    private int lastReconnectAttempts = 0;      // 重连成功时的尝试次数
+
+    // === 心跳监控 ===
+    private int heartbeatSent = 0;
+    private int heartbeatReceived = 0;
+    private int consecutiveMisses = 0;
+    private boolean awaitingHeartbeatReply = false;
+    private static final int HEARTBEAT_MONITOR_INTERVAL = 10; // 每N次输出摘要
 
     // === 回调 ===
     private ChannelListener listener;
@@ -87,8 +97,11 @@ public class PhoenixChannel {
         /** 发生错误 */
         void onError(String message, Throwable cause);
 
-        /** 连接已关闭 */
+        /** 连接已关闭 (仅首次断开触发，重连周期中不重复触发) */
         void onDisconnected(int code, String reason);
+
+        /** 自动重连成功，已重新加入频道 */
+        default void onReconnected(int totalAttempts, long disconnectedMs) {}
     }
 
     /**
@@ -115,13 +128,19 @@ public class PhoenixChannel {
      * @param presenceKey 本客户端在 Presence 中的唯一标识
      */
     public void connect(final String presenceKey) {
+        // 取消任何待处理的重连定时器，防止与新连接冲突
+        cancelReconnect();
+
+        // 清理旧的 WebSocket 客户端（不调用 disconnect 以保留重连状态）
         if (wsClient != null) {
-            DLog.logT(TAG, "WebSocket 已存在，先断开旧连接");
-            disconnect();
+            try { wsClient.close(); } catch (Exception ignored) {}
+            wsClient = null;
         }
 
         shouldReconnect = true;
-        reconnectAttempts = 0;
+        if (!reconnecting) {
+            reconnectAttempts = 0;
+        }
 
         // 构造带 apikey 参数的 WebSocket URL
         String url = realtimeUrl + "?apikey=" + apiKey + "&vsn=1.0.0";
@@ -131,12 +150,17 @@ public class PhoenixChannel {
             wsClient = new WebSocketClient(new URI(url)) {
                 @Override
                 public void onOpen(ServerHandshake handshake) {
-                    DLog.logT(TAG, "WebSocket 连接成功 (状态码: " + handshake.getHttpStatus() + ")");
+                    lastReconnectAttempts = reconnectAttempts;
                     reconnectAttempts = 0;
                     startHeartbeat();
 
-                    if (listener != null) {
-                        Gdx.app.postRunnable(() -> listener.onConnected());
+                    if (reconnecting) {
+                        DLog.logT(TAG, "WebSocket 重连成功, 正在重新加入频道...");
+                    } else {
+                        DLog.logT(TAG, "WebSocket 连接成功 (状态码: " + handshake.getHttpStatus() + ")");
+                        if (listener != null) {
+                            Gdx.app.postRunnable(() -> listener.onConnected());
+                        }
                     }
 
                     // 自动加入频道
@@ -150,17 +174,29 @@ public class PhoenixChannel {
 
                 @Override
                 public void onClose(int code, String reason, boolean remote) {
-                    DLog.logT(TAG, "WebSocket 已断开 (code=" + code + ", reason=" + reason + ", remote=" + remote + ")");
+                    // 如果这不是当前活动的 WebSocket，忽略旧连接的关闭事件
+                    if (wsClient != this) return;
+
                     joined = false;
                     stopHeartbeat();
 
-                    if (listener != null) {
-                        Gdx.app.postRunnable(() -> listener.onDisconnected(code, reason));
-                    }
-
-                    // 尝试重连
                     if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        if (!reconnecting) {
+                            // 重连周期的首次断开，通知监听器
+                            reconnecting = true;
+                            disconnectTimestamp = System.currentTimeMillis();
+                            DLog.logWarnT(TAG, "连接断开 (code=" + code + "), 正在自动重连...");
+                            if (listener != null) {
+                                Gdx.app.postRunnable(() -> listener.onDisconnected(code, reason));
+                            }
+                        }
                         scheduleReconnect(presenceKey);
+                    } else {
+                        reconnecting = false;
+                        DLog.logWarnT(TAG, "连接已关闭 (code=" + code + ", reason=" + reason + ")");
+                        if (listener != null) {
+                            Gdx.app.postRunnable(() -> listener.onDisconnected(code, reason));
+                        }
                     }
                 }
 
@@ -188,6 +224,7 @@ public class PhoenixChannel {
      */
     public void disconnect() {
         shouldReconnect = false;
+        reconnecting = false;
         joined = false;
         stopHeartbeat();
         cancelReconnect();
@@ -299,7 +336,9 @@ public class PhoenixChannel {
 
         // Phoenix 心跳回复
         if (TOPIC_PHOENIX.equals(msgTopic) && EVENT_PHX_REPLY.equals(msgEvent)) {
-            DLog.logT(TAG_HEARTBEAT, "收到心跳回复");
+            heartbeatReceived++;
+            awaitingHeartbeatReply = false;
+            DLog.logT(TAG_HEARTBEAT, "收到心跳回复 (" + heartbeatReceived + "/" + heartbeatSent + ")");
             return;
         }
 
@@ -314,9 +353,13 @@ public class PhoenixChannel {
             return;
         }
 
-        // phx_reply —— 对 phx_join 的回复
+        // phx_reply —— 只处理 phx_join 的回复（ref 必须匹配 joinRef）
+        // 忽略 track/untrack 等操作的 reply，否则会导致 onJoined 重复触发
         if (EVENT_PHX_REPLY.equals(msgEvent)) {
-            handleJoinReply(json);
+            String ref = json.getString("ref", "");
+            if (joinRef != null && joinRef.equals(ref)) {
+                handleJoinReply(json);
+            }
             return;
         }
 
@@ -343,15 +386,27 @@ public class PhoenixChannel {
      * 处理 phx_join 的回复
      */
     private void handleJoinReply(JsonValue json) {
-        // payload.status == "ok" 表示加入成功
         JsonValue payload = json.get("payload");
         if (payload != null) {
             String status = payload.getString("status", "");
             if ("ok".equals(status)) {
                 joined = true;
-                DLog.logT(TAG, "成功加入频道: " + topic);
-                if (listener != null) {
-                    Gdx.app.postRunnable(() -> listener.onJoined());
+
+                if (reconnecting) {
+                    // 重连周期完成
+                    long elapsed = System.currentTimeMillis() - disconnectTimestamp;
+                    final int attempts = lastReconnectAttempts;
+                    final long elapsedMs = elapsed;
+                    reconnecting = false;
+                    DLog.logInfoT(TAG, "重连成功, 已重新加入频道 (重试" + attempts + "次, 断开" + (elapsed / 1000) + "s)");
+                    if (listener != null) {
+                        Gdx.app.postRunnable(() -> listener.onReconnected(attempts, elapsedMs));
+                    }
+                } else {
+                    DLog.logT(TAG, "成功加入频道: " + topic);
+                    if (listener != null) {
+                        Gdx.app.postRunnable(() -> listener.onJoined());
+                    }
                 }
             } else {
                 String errorMsg = "加入频道失败";
@@ -372,12 +427,33 @@ public class PhoenixChannel {
 
     private void startHeartbeat() {
         stopHeartbeat();
+        heartbeatSent = 0;
+        heartbeatReceived = 0;
+        consecutiveMisses = 0;
+        awaitingHeartbeatReply = false;
+
         heartbeatTask = Timer.schedule(new Timer.Task() {
             @Override
             public void run() {
                 if (wsClient != null && wsClient.isOpen()) {
+                    // 检测上次心跳是否收到回复
+                    if (awaitingHeartbeatReply) {
+                        consecutiveMisses++;
+                        DLog.logWarnT(TAG, "心跳丢失! 连续丢失 " + consecutiveMisses);
+                    } else {
+                        consecutiveMisses = 0;
+                    }
+
                     sendMessage(TOPIC_PHOENIX, EVENT_HEARTBEAT, "{}", nextRef(), null);
-                    DLog.logT(TAG_HEARTBEAT, "发送 Phoenix 心跳");
+                    heartbeatSent++;
+                    awaitingHeartbeatReply = true;
+
+                    // 定期输出心跳监控摘要
+                    if (heartbeatSent % HEARTBEAT_MONITOR_INTERVAL == 0) {
+                        DLog.logInfoT(TAG, "心跳监控: 已发送 " + heartbeatSent
+                            + ", 已回复 " + heartbeatReceived
+                            + ", 丢失 " + (heartbeatSent - heartbeatReceived));
+                    }
                 }
             }
         }, HEARTBEAT_INTERVAL, HEARTBEAT_INTERVAL);
@@ -397,14 +473,19 @@ public class PhoenixChannel {
         reconnectAttempts++;
         // 指数退避: 1s, 2s, 4s, 8s ... 最大 30s
         float delay = Math.min(BASE_RECONNECT_DELAY * (1 << (reconnectAttempts - 1)), MAX_RECONNECT_DELAY);
-        DLog.logT(TAG, "计划 " + delay + " 秒后重连 (第 " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + " 次)");
+
+        // 仅首次重连输出到主标签，后续静默避免刷屏
+        if (reconnectAttempts == 1) {
+            DLog.logT(TAG, "计划 " + delay + "s 后重连 (最多 " + MAX_RECONNECT_ATTEMPTS + " 次)");
+        } else {
+            DLog.logT(TAG_HEARTBEAT, "重连 #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + ", " + delay + "s 后");
+        }
 
         cancelReconnect();
         reconnectTask = Timer.schedule(new Timer.Task() {
             @Override
             public void run() {
                 if (shouldReconnect) {
-                    DLog.logT(TAG, "正在尝试重连...");
                     connect(presenceKey);
                 }
             }
