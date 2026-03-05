@@ -3,35 +3,7 @@ include ':core'
 include ':common'
 
 // === 本地 Composite Build 开发模式 ===
-// 自动检测同级目录是否存在库项目，解析其 settings.gradle 自动生成 substitute 规则
-
-/**
- * 自动 includeBuild + 自动 dependencySubstitution
- * @param relativePath  库项目相对路径
- * @param group         子模块 Maven group
- * @param umbrellaId    伞形 POM 的完整坐标，无则传 null
- */
-def autoIncludeLocalLib(String relativePath, String group, String umbrellaId) {
-    def localDir = new File(rootDir, relativePath)
-    if (!localDir.exists()) return
-
-    println "[Settings] 检测到本地 ${localDir.name}，开启源码替换..."
-    includeBuild(localDir) {
-        dependencySubstitution {
-            def libSettings = new File(localDir, 'settings.gradle')
-            libSettings.eachLine { line ->
-                def m = (line =~ /include\s+['"]:\s*(\w+)\s*['"]/)
-                if (m) {
-                    def mod = m[0][1]
-                    substitute module("${group}:${mod}") using project(":${mod}")
-                }
-            }
-            if (umbrellaId) {
-                substitute module(umbrellaId) using project(':')
-            }
-        }
-    }
-}
+apply from: new File(rootDir, '../composite-build.settings.gradle')
 
 autoIncludeLocalLib('../GdxGradle',    'com.github.shikeik',              'com.github.shikeik:GdxGradle')
 autoIncludeLocalLib('../GdxCore',      'com.github.shikeik.GdxCore',      'com.github.shikeik:GdxCore')
