@@ -47,6 +47,12 @@ public class ReliableUdpTransport implements Transport {
     /** 可靠包总超时(ms): 从首次发送算起，超过此时间未收到 ACK 则触发断连 */
     public static final long RELIABLE_TIMEOUT_MS = 15_000;
 
+    // ── PacketLogger 拦截器（A3: 默认关闭，零开销） ──
+    private final PacketLogger packetLogger = new PacketLogger();
+
+    /** 获取数据包日志拦截器（可通过它开关日志和查看统计） */
+    public PacketLogger getPacketLogger() { return packetLogger; }
+
     // 被装饰的原始 UDP 传输层
     private final UdpSocketTransport rawTransport;
 
@@ -225,9 +231,12 @@ public class ReliableUdpTransport implements Transport {
             int seq = nextSeqNum();
             byte[] packet = encodeReliablePacket(seq, lastReceivedSeqNum, payload);
             pendingBuffer.add(seq, packet, System.currentTimeMillis());
+            packetLogger.logTx("Reliable", seq, lastReceivedSeqNum, packetType, packet.length);
             return packet;
         } else {
-            return encodeUnreliablePacket(payload);
+            byte[] packet = encodeUnreliablePacket(payload);
+            packetLogger.logTx("Unreliable", -1, -1, packetType, packet.length);
+            return packet;
         }
     }
 
@@ -264,6 +273,7 @@ public class ReliableUdpTransport implements Transport {
                 // Unreliable: 去掉 1 字节头，直接推送给上层
                 byte[] payload = new byte[rawData.length - 1];
                 System.arraycopy(rawData, 1, payload, 0, payload.length);
+                packetLogger.logRx("Unreliable", -1, -1, -1, rawData.length);
                 if (userCallback != null) {
                     userCallback.onReceiveData(payload, clientId);
                 }
@@ -308,6 +318,7 @@ public class ReliableUdpTransport implements Transport {
                 // 提取 payload 推送给上层
                 byte[] payload = new byte[rawData.length - 5];
                 System.arraycopy(rawData, 5, payload, 0, payload.length);
+                packetLogger.logRx("Reliable", seqNum, ackNum, -1, rawData.length);
                 if (userCallback != null) {
                     userCallback.onReceiveData(payload, clientId);
                 }
@@ -318,6 +329,7 @@ public class ReliableUdpTransport implements Transport {
                 if (rawData.length < 3) return;
                 int ackedSeq = ((rawData[1] & 0xFF) << 8) | (rawData[2] & 0xFF);
                 pendingBuffer.ack(ackedSeq);
+                packetLogger.logRx("ACK", ackedSeq, -1, -1, rawData.length);
                 break;
             }
 
@@ -382,6 +394,9 @@ public class ReliableUdpTransport implements Transport {
         sendPingIfNeeded();
 
         long now = System.currentTimeMillis();
+
+        // PacketLogger 周期摘要输出
+        packetLogger.tickSummary(now);
         List<PendingEntry> entries = pendingBuffer.getAllPending();
 
         for (PendingEntry entry : entries) {
@@ -410,6 +425,7 @@ public class ReliableUdpTransport implements Transport {
                 rawTransport.sendToServer(entry.packetData);
             }
             pendingBuffer.markRetransmitted(entry.seqNum, now);
+            packetLogger.logRetransmit(entry.seqNum, interval);
         }
     }
 
