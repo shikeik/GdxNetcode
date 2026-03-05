@@ -51,6 +51,23 @@ public class NetworkManager {
     // 待处理的断开事件队列（IO 线程写入，主线程 tick() 中消费，线程安全）
     private final CopyOnWriteArrayList<Integer> pendingDisconnects = new CopyOnWriteArrayList<>();
 
+    // ── A2: 玩家身份识别（playerToken）──
+    /** Client 端的 playerToken（连入 Server 时发送，用于重连识别） */
+    private String localPlayerToken;
+    /** Server 端: playerToken → 当前 clientId 映射 */
+    private final Map<String, Integer> tokenToClientId = new HashMap<>();
+    /** Server 端: clientId → playerToken 反向映射 */
+    private final Map<Integer, String> clientIdToToken = new HashMap<>();
+    /** 最近一次 CONNECT_REQUEST 是否为重连 */
+    private boolean lastConnectionReconnect = false;
+
+    /** 设置本机玩家 token（Client 端在连接前调用） */
+    public void setPlayerToken(String token) { this.localPlayerToken = token; }
+    /** 获取本机玩家 token */
+    public String getPlayerToken() { return localPlayerToken; }
+    /** 最近一次 CONNECT_REQUEST 处理结果是否为重连 */
+    public boolean isLastConnectionReconnect() { return lastConnectionReconnect; }
+
     public void setTransport(Transport transport) {
         this.transport = transport;
         // 自动注册数据接收回调，无需手动 transport.setManager()
@@ -59,15 +76,14 @@ public class NetworkManager {
         transport.setConnectionListener(new NetworkConnectionListener() {
             @Override
             public void onClientConnected(int clientId) {
-                // Client 端收到分配的 clientId 时，自动设置
                 if (transport.isClient()) {
+                    // Client 端: UDP 握手完成，暂存 clientId，自动发送 CONNECT_REQUEST
                     localClientId = clientId;
-                    DLog.logT("Netcode", "[NetworkManager] Client 被分配 clientId=" + clientId);
+                    DLog.logT("Netcode", "[NetworkManager] Client UDP 握手完成，clientId=" + clientId);
+                    sendConnectRequest();
                 }
-                // 转发给游戏层监听器
-                if (connectionListener != null) {
-                    connectionListener.onClientConnected(clientId);
-                }
+                // Server 端: 不立即转发给游戏层，等待 CONNECT_REQUEST 到达后再通知
+                // （A2: 延迟通知，确保 token 映射建立后再触发业务层 Spawn 逻辑）
             }
 
             @Override
@@ -321,7 +337,28 @@ public class NetworkManager {
     private void onReceiveDataInternal(byte[] payload, int clientId) {
         NetBuffer inBuffer = new NetBuffer(payload);
         int packetType = inBuffer.readInt();
-        
+
+        // A2: CONNECT_REQUEST(0x30) — Server 端处理
+        if (packetType == 0x30) {
+            String token = inBuffer.readString();
+            handleConnectRequest(token, clientId);
+            return;
+        }
+
+        // A2: CONNECT_ACCEPT(0x31) — Client 端处理
+        if (packetType == 0x31) {
+            int acceptedClientId = inBuffer.readInt();
+            boolean isReconnect = inBuffer.readBoolean();
+            localClientId = acceptedClientId;
+            DLog.logT("Netcode", "[NetworkManager] Client 收到 CONNECT_ACCEPT: clientId="
+                + acceptedClientId + ", isReconnect=" + isReconnect);
+            // 通知游戏层
+            if (connectionListener != null) {
+                connectionListener.onClientConnected(acceptedClientId);
+            }
+            return;
+        }
+
         // SpawnPacket: 客户端收到后自动通过预制体工厂派生本地实体
         if (packetType == 0x11) {
             int netId = inBuffer.readInt();
@@ -511,6 +548,101 @@ public class NetworkManager {
         } catch (Exception e) {
             DLog.logErr("[NetworkManager] RPC 调用失败: " + methodName + " -> " + e.getMessage());
         }
+    }
+
+    // ========== A2: 玩家身份识别握手 ==========
+
+    /**
+     * Client 端: 自动发送 CONNECT_REQUEST 封包。
+     * 在 UDP 握手完成后由 setTransport 回调自动触发。
+     * 封包格式: [0x30][playerToken(string)]
+     */
+    private void sendConnectRequest() {
+        if (localPlayerToken == null || localPlayerToken.isEmpty()) {
+            DLog.logT("Netcode", "[NetworkManager] 未设置 playerToken，跳过 CONNECT_REQUEST（兼容模式）");
+            // 兼容模式: 如果未设置 token，直接通知游戏层（旧行为）
+            if (connectionListener != null) {
+                connectionListener.onClientConnected(localClientId);
+            }
+            return;
+        }
+        NetBuffer buf = new NetBuffer();
+        buf.writeInt(0x30); // CONNECT_REQUEST
+        buf.writeString(localPlayerToken);
+        transport.sendToServer(buf.toByteArray());
+        DLog.logT("Netcode", "[NetworkManager] Client 发送 CONNECT_REQUEST: token=" + localPlayerToken);
+    }
+
+    /**
+     * Server 端: 处理 CONNECT_REQUEST。
+     * 根据 playerToken 判断是新玩家还是重连。
+     * @param token    客户端发来的 playerToken
+     * @param clientId 该客户端的传输层 clientId
+     */
+    private void handleConnectRequest(String token, int clientId) {
+        boolean isReconnect = tokenToClientId.containsKey(token);
+
+        if (isReconnect) {
+            int oldClientId = tokenToClientId.get(token);
+            // 更新映射: token → 新的 clientId
+            tokenToClientId.put(token, clientId);
+            clientIdToToken.remove(oldClientId);
+            clientIdToToken.put(clientId, token);
+
+            // 重绑所有属于旧 clientId 的 NetworkObject 到新 clientId
+            for (NetworkObject obj : networkObjects.values()) {
+                if (obj.getOwnerClientId() == oldClientId) {
+                    obj.setOwnerClientId(clientId);
+                }
+            }
+            DLog.logT("Netcode", "[NetworkManager] 重连: token=" + token
+                + " oldClientId=" + oldClientId + " → newClientId=" + clientId);
+        } else {
+            tokenToClientId.put(token, clientId);
+            clientIdToToken.put(clientId, token);
+            DLog.logT("Netcode", "[NetworkManager] 新玩家: token=" + token + " clientId=" + clientId);
+        }
+
+        lastConnectionReconnect = isReconnect;
+
+        // 发送 CONNECT_ACCEPT
+        sendConnectAccept(clientId, isReconnect);
+
+        // 通知游戏层（Server 端延迟到此刻才触发）
+        if (connectionListener != null) {
+            connectionListener.onClientConnected(clientId);
+        }
+    }
+
+    /**
+     * Server 端: 发送 CONNECT_ACCEPT 给指定客户端。
+     * 封包格式: [0x31][clientId(int)][isReconnect(boolean)]
+     */
+    private void sendConnectAccept(int clientId, boolean isReconnect) {
+        NetBuffer buf = new NetBuffer();
+        buf.writeInt(0x31); // CONNECT_ACCEPT
+        buf.writeInt(clientId);
+        buf.writeBoolean(isReconnect);
+        transport.sendToClient(clientId, buf.toByteArray());
+        DLog.logT("Netcode", "[NetworkManager] Server 发送 CONNECT_ACCEPT: clientId="
+            + clientId + ", isReconnect=" + isReconnect);
+    }
+
+    /**
+     * 根据 playerToken 获取对应的 clientId（Server 端查询）。
+     * @return clientId，若 token 未知则返回 -1
+     */
+    public int getClientIdByToken(String token) {
+        Integer id = tokenToClientId.get(token);
+        return id != null ? id : -1;
+    }
+
+    /**
+     * 根据 clientId 获取对应的 playerToken（Server 端查询）。
+     * @return playerToken，若 clientId 未知则返回 null
+     */
+    public String getTokenByClientId(int clientId) {
+        return clientIdToToken.get(clientId);
     }
 
     /**
