@@ -6,6 +6,9 @@ dependencies {
     // 底层网络核心 (Transport / RPC / NetworkManager)
     api project(':core')
 
+    // JLine 3 — 服务器控制台交互增强 (补全、日志不打断输入行)
+    api 'org.jline:jline:3.26.3'
+
     // WebSocket (Supabase Realtime Phoenix Channel)
     api 'org.java-websocket:Java-WebSocket:1.5.7'
     api 'org.slf4j:slf4j-nop:2.0.13'

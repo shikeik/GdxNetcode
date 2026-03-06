@@ -1,9 +1,18 @@
 package com.goldsprite.gdengine.netcode.common.headless;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Scanner;
 import java.util.function.Consumer;
+
+import org.jline.reader.Candidate;
+import org.jline.reader.Completer;
+import org.jline.reader.EndOfFileException;
+import org.jline.reader.LineReader;
+import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.UserInterruptException;
+import org.jline.terminal.Terminal;
+import org.jline.terminal.TerminalBuilder;
 
 import com.goldsprite.gdengine.log.DLog;
 
@@ -31,18 +40,43 @@ public class ServerConsole extends Thread {
     /** 服务器启动时间（毫秒） */
     private final long startTimeMs;
 
+    /** JLine 终端 */
+    private Terminal terminal;
+
+    /** JLine 行读取器（提供补全、输入行固定等能力） */
+    private LineReader reader;
+
     public ServerConsole(HeadlessGameServer server) {
         super("ServerConsole");
         setDaemon(true); // 守护线程，JVM 退出时自动终止
         this.server = server;
         this.startTimeMs = System.currentTimeMillis();
 
-        // 优化日志输出：移除默认输出，使用带提示符优化的输出
-        DLog.removeLogOutput(DLog.StandardOutput.class);
-        DLog.registerLogOutput(new ConsoleLogOutput());
-
-        // 注册内置命令
+        // 注册内置命令（需在构建 LineReader 之前完成，以便补全器能拿到命令列表）
         registerBuiltinCommands();
+
+        // 构建 JLine Terminal + LineReader
+        try {
+            terminal = TerminalBuilder.builder()
+                .system(true)
+                .build();
+            reader = LineReaderBuilder.builder()
+                .terminal(terminal)
+                .completer(buildCommandCompleter())
+                .build();
+            // 候选列表自动展示，不需要按两次 Tab
+            reader.setOpt(LineReader.Option.AUTO_LIST);
+            // Tab 补全进入交互式菜单，方向键可选择
+            reader.setOpt(LineReader.Option.AUTO_MENU);
+            // 输入时自动显示行内候选建议（类似 fish shell，安全不阻塞）
+            reader.setAutosuggestion(LineReader.SuggestionType.COMPLETER);
+        } catch (IOException e) {
+            DLog.logWarn("Console", "JLine 初始化失败，回退到基础模式: " + e.getMessage());
+        }
+
+        // 优化日志输出：移除默认输出，使用 JLine 感知的输出
+        DLog.removeLogOutput(DLog.StandardOutput.class);
+        DLog.registerLogOutput(new ConsoleLogOutput(reader));
     }
 
     /**
@@ -58,38 +92,26 @@ public class ServerConsole extends Thread {
 
     @Override
     public void run() {
-        Scanner scanner = new Scanner(System.in);
-        // 初始提示符
-        System.out.print("> ");
         while (running) {
             try {
-                if (!scanner.hasNextLine()) {
-                    // stdin 被关闭（如非交互环境），静默退出
-                    break;
+                String line;
+                if (reader != null) {
+                    line = reader.readLine("> ");
+                } else {
+                    // 回退：无 JLine 时用 System.in 直接读
+                    java.util.Scanner scanner = new java.util.Scanner(System.in);
+                    if (!scanner.hasNextLine()) break;
+                    line = scanner.nextLine();
                 }
-                String line = scanner.nextLine().trim();
-                
-                // 处理完一行输入后，如果是非空命令，通常会有输出，
-                // 输出结束后需要重新打印提示符（在下一次循环开头处理，或者这里处理）
-                // 但考虑到日志随时可能插入，我们在循环开头打印提示符比较合适？
-                // 不，scanner.nextLine() 阻塞期间日志可能会打印提示符。
-                // 如果我们在这里打印，那是在命令执行完后。
-                // 如果日志在执行期间打印，它会补一个 >。
-                // 如果没有日志，我们需要补一个 >。
-                // 但是如果在循环开头打印，那 nextLine 返回后，处理完，回到开头，打印 >，然后阻塞。这是对的。
-                
-                if (line.isEmpty()) {
-                    System.out.print("> ");
-                    continue;
-                }
+                if (line == null) break;
+                line = line.trim();
+
+                if (line.isEmpty()) continue;
 
                 // ── / 前缀自动剥除（兼容 MC 风格输入） ──
                 if (line.startsWith("/")) {
                     line = line.substring(1).trim();
-                    if (line.isEmpty()) {
-                        System.out.print("> ");
-                        continue;
-                    }
+                    if (line.isEmpty()) continue;
                 }
 
                 // ── 统一走命令表路由 ──
@@ -103,24 +125,54 @@ public class ServerConsole extends Thread {
                 } else {
                     System.out.println("未知命令: " + cmd + "。输入 'help' 查看可用命令。");
                 }
-                
-                // 命令执行完毕，打印提示符等待下一条
-                System.out.print("> ");
-                
+
+            } catch (UserInterruptException e) {
+                // Ctrl+C — 优雅退出
+                System.out.println("  正在优雅关闭服务器...");
+                server.requestShutdown();
+                break;
+            } catch (EndOfFileException e) {
+                // stdin 被关闭（非交互环境）
+                break;
             } catch (Exception e) {
                 if (running) {
                     DLog.logWarn("Console", "命令处理异常: " + e.getMessage());
-                    // 异常日志会自带 >，这里不需要补
                 }
             }
         }
-        scanner.close();
+    }
+
+    /**
+     * 构建带描述的命令补全器。
+     * Tab 时显示候选列表，每个候选项附带命令说明。
+     */
+    private Completer buildCommandCompleter() {
+        return (reader, line, candidates) -> {
+            String word = line.word().toLowerCase();
+            for (Map.Entry<String, CommandEntry> e : commands.entrySet()) {
+                String name = e.getKey();
+                if (name.startsWith(word)) {
+                    // 将命令名与描述合并为显示文本，确保候选列表始终单列竖排
+                    String displayText = String.format("%-12s (%s)", name, e.getValue().description);
+                    candidates.add(new Candidate(
+                        name,           // value（实际插入值）
+                        displayText,    // display（带描述的显示文本）
+                        null, null, null, null, true
+                    ));
+                }
+            }
+        };
     }
 
     /** 停止控制台线程 */
     public void shutdown() {
         running = false;
         this.interrupt();
+        if (terminal != null) {
+            try {
+                terminal.close();
+            } catch (IOException ignored) {}
+        }
     }
 
     // ══════════════ 内置命令 ══════════════
@@ -239,19 +291,25 @@ public class ServerConsole extends Thread {
     // ══════════════ 内部类 ══════════════
 
     /**
-     * 带输入提示符优化的日志输出端。
-     * 在每条日志输出前回到行首，输出后重新打印提示符，
-     * 防止日志直接插在用户输入后面导致混乱。
+     * JLine 感知的日志输出端。
+     * 通过 {@code reader.printAbove()} 将日志插入到输入行上方，
+     * 保证用户正在编辑的命令行始终固定在最底部不被冲走。
      */
     private static class ConsoleLogOutput extends DLog.StandardOutput {
+        private final LineReader reader;
+
+        ConsoleLogOutput(LineReader reader) {
+            this.reader = reader;
+        }
+
         @Override
         public void onLog(DLog.Level level, String tag, String msg) {
-            // 回到行首清除当前输入行的显示（虽然 buffer 还在但不可见）
-            // 如果终端支持 ANSI，可以使用 \033[2K 清除整行
-            System.out.print("\r"); 
-            super.onLog(level, tag, msg);
-            // 重新打印提示符，等待用户输入
-            System.out.print("> ");
+            String formatted = formatLog(level, tag, msg);
+            if (reader != null) {
+                reader.printAbove(formatted);
+            } else {
+                System.out.println(formatted);
+            }
         }
     }
 
