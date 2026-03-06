@@ -366,7 +366,9 @@ public class PhoenixChannel {
         // presence_state —— 全量 Presence 同步
         if (EVENT_PRESENCE_STATE.equals(msgEvent)) {
             JsonValue payload = json.get("payload");
-            if (payload != null && listener != null) {
+            if (payload == null) {
+                DLog.logWarnT(TAG, "presence_state payload 为空, 原始消息: " + message);
+            } else if (listener != null) {
                 Gdx.app.postRunnable(() -> listener.onPresenceState(payload));
             }
             return;
@@ -375,7 +377,9 @@ public class PhoenixChannel {
         // presence_diff —— 增量 Presence 更新
         if (EVENT_PRESENCE_DIFF.equals(msgEvent)) {
             JsonValue payload = json.get("payload");
-            if (payload != null && listener != null) {
+            if (payload == null) {
+                DLog.logWarnT(TAG, "presence_diff payload 为空, 原始消息: " + message);
+            } else if (listener != null) {
                 Gdx.app.postRunnable(() -> listener.onPresenceDiff(payload));
             }
             return;

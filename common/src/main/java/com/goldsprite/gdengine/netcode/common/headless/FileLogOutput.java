@@ -1,13 +1,14 @@
 package com.goldsprite.gdengine.netcode.common.headless;
 
 import java.io.File;
-import java.io.FileWriter;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
-import com.goldsprite.gdengine.log.DLog;
 import com.goldsprite.gdengine.log.DLog.Level;
 import com.goldsprite.gdengine.log.DLog.LogOutput;
 
@@ -31,10 +32,11 @@ public class FileLogOutput implements LogOutput {
 			if (parent != null && !parent.exists()) {
 				parent.mkdirs();
 			}
-			// 追加模式
-			this.writer = new PrintWriter(new FileWriter(logFile, true), true); // autoFlush = true
+			// 追加模式, UTF-8 编码
+			this.writer = new PrintWriter(
+				new OutputStreamWriter(new FileOutputStream(logFile, true), StandardCharsets.UTF_8), true);
 			
-			logSystem("=== Log Started: " + dateFormat.format(new Date()) + " ===");
+			logSystem("\n\n\n\n\n\n=== Log Started: " + dateFormat.format(new Date()) + " ===");
 		} catch (IOException e) {
 			System.err.println("[FileLogOutput] Failed to open log file: " + filePath);
 			e.printStackTrace();

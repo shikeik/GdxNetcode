@@ -2,7 +2,10 @@ package com.goldsprite.gdengine.netcode.common.headless;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
@@ -58,26 +61,58 @@ public class ServerConfig {
     /** 日志输出文件（空字符串则仅输出到控制台） */
     public String logFile = "";
 
+    /** 默认配置资源名（classpath 下） */
+    private static final String DEFAULT_CONFIG_RESOURCE = "server.properties";
+
     /**
-     * 按 默认值 → server.properties → 命令行参数 的优先级加载配置。
+     * 若目标文件不存在，则从 classpath（JAR 内 resources/）释放一份默认配置。
+     * <p>
+     * 可在 {@code Gdx.app} 初始化之前调用（使用 System.out 输出日志）。
+     *
+     * @param targetFile 目标配置文件
+     */
+    public static void extractDefaultConfigIfAbsent(File targetFile) {
+        if (targetFile.exists()) return;
+
+        try (InputStream in = ServerConfig.class.getResourceAsStream("/" + DEFAULT_CONFIG_RESOURCE)) {
+            if (in == null) {
+                System.out.println("[ServerConfig] 警告: JAR 内未找到默认 " + DEFAULT_CONFIG_RESOURCE);
+                return;
+            }
+            File parent = targetFile.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+            try (OutputStream out = new FileOutputStream(targetFile)) {
+                byte[] buf = new byte[4096];
+                int len;
+                while ((len = in.read(buf)) != -1) {
+                    out.write(buf, 0, len);
+                }
+            }
+            System.out.println("[ServerConfig] 已释放默认配置文件: " + targetFile.getAbsolutePath());
+        } catch (Exception e) {
+            System.out.println("[ServerConfig] 释放默认配置失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 从默认工作目录下的 server.properties 加载配置（Server 模式）。
      *
      * @param args main() 传入的命令行参数
      * @return 合并后的配置实例
      */
-    /**
-     * 从默认工作目录下的 server.properties 加载配置（Server 模式）。
-     */
     public static ServerConfig load(String[] args) {
-        return loadFromFile(new File("server.properties"), args);
+        return loadFromFile(new File(DEFAULT_CONFIG_RESOURCE), args);
     }
 
     /**
-     * Host 模式专用加载：从指定文件加载配置，无命令行参数。
+     * 从指定文件加载配置，无命令行参数。
      * <p>
-     * Host 配置实例的公共字段可被 UI 覆写（如房间名、端口），
+     * 配置实例的公共字段可被 UI 覆写（如房间名、端口），
      * 修改后直接传递给游戏屏幕，为后续房间/玩家元数据持久化做准备。
      *
-     * @param propsFile host.properties 文件（不存在时返回纯默认配置）
+     * @param propsFile server.properties 文件（不存在时返回纯默认配置）
      * @return 可被 UI 继续修改的配置实例
      */
     public static ServerConfig loadForHost(File propsFile) {
